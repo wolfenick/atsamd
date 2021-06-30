@@ -69,3 +69,6 @@ name = "blinky_basic"
 [[example]]
 name = "i2c"
 required-features = ["atsamd-hal/dma"]
+
+[[example]]
+name = "i2s"
