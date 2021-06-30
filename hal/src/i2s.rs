@@ -1,4 +1,5 @@
 use crate::clock;
+#[cfg(feature = "dma")]
 use crate::dmac::Buffer;
 use crate::gpio::v2::*;
 use crate::pac;
@@ -7,10 +8,10 @@ use crate::time::Hertz;
 use core::convert::From;
 use core::marker::PhantomData;
 
-#[cfg(feature = "samd21")]
+#[cfg(all(feature = "samd21", feature = "dma"))]
 pub use pac::dmac::chctrlb::TRIGSRC_A as DmaTriggerSource;
 
-#[cfg(feature = "min-samd51g")]
+#[cfg(all(feature = "min-samd51g", feature = "dma"))]
 pub use pac::dmac::chctrla::TRIGSRC_A as DmaTriggerSource;
 
 pub use pac::i2s::clkctrl::SLOTSIZE_A as BitsPerSlot;
@@ -201,9 +202,11 @@ impl <T: SerializerOrientation> InterruptMask<T> {
     }
 }
 
+#[cfg(feature = "dma")]
 #[derive(Clone, Copy)]
 pub struct I2sDmaBuffer(*mut u32);
 
+#[cfg(feature = "dma")]
 unsafe impl Buffer for I2sDmaBuffer {
     type Beat = u32;
 
@@ -445,6 +448,7 @@ impl<MasterClockSource, SerialClockPin, FrameSyncPin, RxPin, TxPin>
         InterruptMask::from(ints)
     }
     
+    #[cfg(feature = "dma")]
     pub fn transmit_dma_buffer<SerializerCfg: SerializerOrientation>(&self) -> I2sDmaBuffer
     where
         RxPin: SerializerRx<SerializerCfg>,
@@ -455,6 +459,7 @@ impl<MasterClockSource, SerialClockPin, FrameSyncPin, RxPin, TxPin>
         )
     }
 
+    #[cfg(feature = "dma")]
     pub fn transmit_dma_trigger<SerializerCfg: SerializerOrientation>(&self) -> DmaTriggerSource
     where
         RxPin: SerializerRx<SerializerCfg>,
@@ -466,6 +471,7 @@ impl<MasterClockSource, SerialClockPin, FrameSyncPin, RxPin, TxPin>
         }
     }
 
+    #[cfg(feature = "dma")]
     pub fn receive_dma_buffer<SerializerCfg: SerializerOrientation>(&self) -> I2sDmaBuffer
     where
         RxPin: SerializerRx<SerializerCfg>,
@@ -476,6 +482,7 @@ impl<MasterClockSource, SerialClockPin, FrameSyncPin, RxPin, TxPin>
         )
     }
 
+    #[cfg(feature = "dma")]
     pub fn receive_dma_trigger<SerializerCfg: SerializerOrientation>(&self) -> DmaTriggerSource
     where
         RxPin: SerializerRx<SerializerCfg>,
