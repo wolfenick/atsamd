@@ -1,22 +1,16 @@
 use crate::clock;
 use crate::dmac::Buffer;
-use crate::gpio;
+use crate::gpio::v2::*;
 use crate::pac;
 use crate::time::Hertz;
 
 use core::convert::From;
 use core::marker::PhantomData;
 
-// TODO for samd5x parts, this will need to be pac::dmac::chctrla::TRIGSRC_A
 #[cfg(feature = "samd21")]
 pub use pac::dmac::chctrlb::TRIGSRC_A as DmaTriggerSource;
 
-#[cfg(any(
-    feature = "samd51",
-    feature = "same51",
-    feature = "same53",
-    feature = "same54"
-))]
+#[cfg(feature = "min-samd51g")]
 pub use pac::dmac::chctrla::TRIGSRC_A as DmaTriggerSource;
 
 pub use pac::i2s::clkctrl::SLOTSIZE_A as BitsPerSlot;
@@ -71,33 +65,44 @@ impl MasterClock<ClockUnit1> for clock::I2S1Clock {
     }
 }
 
-impl MasterClock<ClockUnit0> for ExternalClock<gpio::Pa9<gpio::PfG>> {
+#[cfg(feature = "samd21")]
+impl MasterClock<ClockUnit0> for ExternalClock<Pin<PA09, AlternateG>> {
     fn freq(&self) -> Hertz {
         self.frequency
     }
 }
 
-#[cfg(any(feature = "min-samd21j"))] // TODO pick min packages for each GPIO pin, also for samd5x
-impl MasterClock<ClockUnit0> for ExternalClock<gpio::Pb17<gpio::PfG>> {
+#[cfg(feature = "min-samd21j")]
+impl MasterClock<ClockUnit0> for ExternalClock<Pin<PB17, AlternateG>> {
     fn freq(&self) -> Hertz {
         self.frequency
     }
 }
 
-impl MasterClock<ClockUnit1> for ExternalClock<gpio::Pb10<gpio::PfG>> {
+#[cfg(feature = "min-samd21g")]
+impl MasterClock<ClockUnit1> for ExternalClock<Pin<PB10, AlternateG>> {
     fn freq(&self) -> Hertz {
         self.frequency
     }
 }
 
 pub trait SerialClock<ClockUnit> {}
-impl SerialClock<ClockUnit0> for gpio::Pa10<gpio::PfG> {}
-impl SerialClock<ClockUnit1> for gpio::Pb11<gpio::PfG> {}
+
+#[cfg(feature = "samd21")]
+impl SerialClock<ClockUnit0> for Pin<PA10, AlternateG> {}
+#[cfg(feature = "min-samd21g")]
+impl SerialClock<ClockUnit0> for Pin<PA20, AlternateG> {}
+#[cfg(feature = "min-samd21g")]
+impl SerialClock<ClockUnit1> for Pin<PB11, AlternateG> {}
 
 pub trait FrameSync<ClockUnit> {}
-impl FrameSync<ClockUnit0> for gpio::Pa11<gpio::PfG> {}
-#[cfg(any(feature = "min-samd21j"))]
-impl FrameSync<ClockUnit1> for gpio::Pb12<gpio::PfG> {}
+
+#[cfg(feature = "samd21")]
+impl FrameSync<ClockUnit0> for Pin<PA11, AlternateG> {}
+#[cfg(feature = "min-samd21g")]
+impl FrameSync<ClockUnit0> for Pin<PA21, AlternateG> {}
+#[cfg(feature = "min-samd21j")]
+impl FrameSync<ClockUnit1> for Pin<PB12, AlternateG> {}
 
 /// The I2S peripheral has two serializers; refer to them using this enum
 pub enum Serializer {
@@ -144,18 +149,25 @@ impl SerializerOrientation for Tx1Rx0 {
 
 // TODO make these optional, in particular the Tx one to support PDM mics
 pub trait SerializerTx<SerializerOrientation> {}
-impl SerializerTx<Tx0Rx1> for gpio::Pa7<gpio::PfG> {}
-impl SerializerTx<Tx1Rx0> for gpio::Pa8<gpio::PfG> {}
-impl SerializerTx<Tx0Rx1> for gpio::Pa19<gpio::PfG> {}
-#[cfg(any(feature = "min-samd21j"))]
-impl SerializerTx<Tx1Rx0> for gpio::Pb16<gpio::PfG> {}
+
+#[cfg(feature = "samd21")]
+impl SerializerTx<Tx0Rx1> for Pin<PA07, AlternateG> {}
+#[cfg(feature = "samd21")]
+impl SerializerTx<Tx1Rx0> for Pin<PA08, AlternateG> {}
+#[cfg(feature = "samd21")]
+impl SerializerTx<Tx0Rx1> for Pin<PA19, AlternateG> {}
+#[cfg(feature = "min-samd21j")]
+impl SerializerTx<Tx1Rx0> for Pin<PB16, AlternateG> {}
 
 pub trait SerializerRx<SerializerOrientation> {}
-impl SerializerRx<Tx1Rx0> for gpio::Pa7<gpio::PfG> {}
-impl SerializerRx<Tx0Rx1> for gpio::Pa8<gpio::PfG> {}
-impl SerializerRx<Tx1Rx0> for gpio::Pa19<gpio::PfG> {}
-#[cfg(any(feature = "min-samd21j"))]
-impl SerializerRx<Tx0Rx1> for gpio::Pb16<gpio::PfG> {}
+#[cfg(feature = "samd21")]
+impl SerializerRx<Tx1Rx0> for Pin<PA07, AlternateG> {}
+#[cfg(feature = "samd21")]
+impl SerializerRx<Tx0Rx1> for Pin<PA08, AlternateG> {}
+#[cfg(feature = "samd21")]
+impl SerializerRx<Tx1Rx0> for Pin<PA19, AlternateG> {}
+#[cfg(feature = "min-samd21j")]
+impl SerializerRx<Tx0Rx1> for Pin<PB16, AlternateG> {}
 
 pub struct InterruptMask<T> {
     mask: u16,
@@ -291,11 +303,11 @@ impl<MasterClockSource, SerialClockPin, FrameSyncPin, RxPin, TxPin>
 
         Self {
             hw,
-            serial_clock_pin,
-            frame_sync_pin,
-            data_in_pin,
-            data_out_pin,
-            master_clock_source,
+            serial_clock_pin: serial_clock_pin,
+            frame_sync_pin: frame_sync_pin.into(),
+            data_in_pin: data_in_pin.into(),
+            data_out_pin: data_out_pin.into(),
+            master_clock_source: master_clock_source,
         }
     }
 
