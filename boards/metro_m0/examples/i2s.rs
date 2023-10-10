@@ -12,12 +12,12 @@ use metro_m0 as bsp;
 
 use bsp::entry;
 use hal::clock::GenericClockController;
-use hal::gpio::v2::AlternateG;
+use hal::gpio::AlternateG;
 use hal::i2s::{
     self,
     I2s,
 };
-use hal::time::KiloHertz;
+use hal::time::Hertz;
 use pac::Peripherals;
 
 #[entry]
@@ -37,7 +37,7 @@ fn main() -> ! {
         peripherals.I2S,
         &mut peripherals.PM,
         clocks.i2s0(&gclk0).unwrap(),
-        KiloHertz(2048), // Serial clock frequency
+        Hertz::from_raw(2048000), // Serial clock frequency TODO KiloHertz should work - try_into impl?
         8,  // Number of slots
         i2s::BitsPerSlot::_32,
         pins.d6.into_mode::<AlternateG>(), // Serial Clock (labelled tx)

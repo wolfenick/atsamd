@@ -1,7 +1,7 @@
 use crate::clock;
 #[cfg(feature = "dma")]
 use crate::dmac::Buffer;
-use crate::gpio::v2::*;
+use crate::gpio::*;
 use crate::pac;
 use crate::time::Hertz;
 
@@ -11,7 +11,8 @@ use core::marker::PhantomData;
 #[cfg(all(feature = "samd21", feature = "dma"))]
 pub use pac::dmac::chctrlb::TRIGSRC_A as DmaTriggerSource;
 
-#[cfg(all(feature = "min-samd51g", feature = "dma"))]
+// TODO how about E51 variants?
+#[cfg(all(feature = "samd51", feature = "dma"))]
 pub use pac::dmac::chctrla::TRIGSRC_A as DmaTriggerSource;
 
 pub use pac::i2s::clkctrl::SLOTSIZE_A as BitsPerSlot;
@@ -66,21 +67,21 @@ impl MasterClock<ClockUnit1> for clock::I2S1Clock {
     }
 }
 
-#[cfg(feature = "samd21")]
+#[cfg(any(feature = "pins-d21e", feature = "pins-d21g", feature = "pins-d21j"))]
 impl MasterClock<ClockUnit0> for ExternalClock<Pin<PA09, AlternateG>> {
     fn freq(&self) -> Hertz {
         self.frequency
     }
 }
 
-#[cfg(feature = "min-samd21j")]
+#[cfg(feature = "pins-d21j")]
 impl MasterClock<ClockUnit0> for ExternalClock<Pin<PB17, AlternateG>> {
     fn freq(&self) -> Hertz {
         self.frequency
     }
 }
 
-#[cfg(feature = "min-samd21g")]
+#[cfg(any(feature = "pins-d21g", feature = "pins-d21j"))]
 impl MasterClock<ClockUnit1> for ExternalClock<Pin<PB10, AlternateG>> {
     fn freq(&self) -> Hertz {
         self.frequency
@@ -89,20 +90,20 @@ impl MasterClock<ClockUnit1> for ExternalClock<Pin<PB10, AlternateG>> {
 
 pub trait SerialClock<ClockUnit> {}
 
-#[cfg(feature = "samd21")]
+#[cfg(any(feature = "pins-d21e", feature = "pins-d21g", feature = "pins-d21j"))]
 impl SerialClock<ClockUnit0> for Pin<PA10, AlternateG> {}
-#[cfg(feature = "min-samd21g")]
+#[cfg(any(feature = "pins-d21g", feature = "pins-d21j"))]
 impl SerialClock<ClockUnit0> for Pin<PA20, AlternateG> {}
-#[cfg(feature = "min-samd21g")]
+#[cfg(any(feature = "pins-d21g", feature = "pins-d21j"))]
 impl SerialClock<ClockUnit1> for Pin<PB11, AlternateG> {}
 
 pub trait FrameSync<ClockUnit> {}
 
-#[cfg(feature = "samd21")]
+#[cfg(any(feature = "pins-d21e", feature = "pins-d21g", feature = "pins-d21j"))]
 impl FrameSync<ClockUnit0> for Pin<PA11, AlternateG> {}
-#[cfg(feature = "min-samd21g")]
+#[cfg(any(feature = "pins-d21g", feature = "pins-d21j"))]
 impl FrameSync<ClockUnit0> for Pin<PA21, AlternateG> {}
-#[cfg(feature = "min-samd21j")]
+#[cfg(feature = "pins-d21j")]
 impl FrameSync<ClockUnit1> for Pin<PB12, AlternateG> {}
 
 /// The I2S peripheral has two serializers; refer to them using this enum
@@ -151,23 +152,23 @@ impl SerializerOrientation for Tx1Rx0 {
 // TODO make these optional, in particular the Tx one to support PDM mics
 pub trait SerializerTx<SerializerOrientation> {}
 
-#[cfg(feature = "samd21")]
+#[cfg(any(feature = "pins-d21e", feature = "pins-d21g", feature = "pins-d21j"))]
 impl SerializerTx<Tx0Rx1> for Pin<PA07, AlternateG> {}
-#[cfg(feature = "samd21")]
+#[cfg(any(feature = "pins-d21e", feature = "pins-d21g", feature = "pins-d21j"))]
 impl SerializerTx<Tx1Rx0> for Pin<PA08, AlternateG> {}
-#[cfg(feature = "samd21")]
+#[cfg(any(feature = "pins-d21e", feature = "pins-d21g", feature = "pins-d21j"))]
 impl SerializerTx<Tx0Rx1> for Pin<PA19, AlternateG> {}
-#[cfg(feature = "min-samd21j")]
+#[cfg(feature = "pins-d21j")]
 impl SerializerTx<Tx1Rx0> for Pin<PB16, AlternateG> {}
 
 pub trait SerializerRx<SerializerOrientation> {}
-#[cfg(feature = "samd21")]
+#[cfg(any(feature = "pins-d21e", feature = "pins-d21g", feature = "pins-d21j"))]
 impl SerializerRx<Tx1Rx0> for Pin<PA07, AlternateG> {}
-#[cfg(feature = "samd21")]
+#[cfg(any(feature = "pins-d21e", feature = "pins-d21g", feature = "pins-d21j"))]
 impl SerializerRx<Tx0Rx1> for Pin<PA08, AlternateG> {}
-#[cfg(feature = "samd21")]
+#[cfg(any(feature = "pins-d21e", feature = "pins-d21g", feature = "pins-d21j"))]
 impl SerializerRx<Tx1Rx0> for Pin<PA19, AlternateG> {}
-#[cfg(feature = "min-samd21j")]
+#[cfg(feature = "pins-d21j")]
 impl SerializerRx<Tx0Rx1> for Pin<PB16, AlternateG> {}
 
 pub struct InterruptMask<T> {
@@ -268,7 +269,7 @@ impl<MasterClockSource, SerialClockPin, FrameSyncPin, RxPin, TxPin>
 
         // defmt::info!("Master clock running at {:?}", master_clock_source.freq().0);
 
-        let master_clock_divisor = (master_clock_source.freq().0 / serial_freq.into().0 - 1) as u8;
+        let master_clock_divisor = (master_clock_source.freq() / serial_freq.into() - 1) as u8;
         // defmt::info!("divisor is {:?}", master_clock_divisor);
 
         // unsafe is due to the bits() calls
