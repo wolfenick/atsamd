@@ -4,9 +4,12 @@ use crate::dmac::Buffer;
 use crate::gpio::*;
 use crate::pac;
 use crate::time::Hertz;
+use crate::typelevel::NoneT;
 
 use core::convert::From;
 use core::marker::PhantomData;
+use core::ops::DerefMut;
+use embedded_hal::can::Frame;
 
 #[cfg(all(feature = "samd21", feature = "dma"))]
 pub use pac::dmac::chctrlb::TRIGSRC_A as DmaTriggerSource;
@@ -171,6 +174,10 @@ impl SerializerRx<Tx1Rx0> for Pin<PA19, AlternateG> {}
 #[cfg(feature = "pins-d21j")]
 impl SerializerRx<Tx0Rx1> for Pin<PB16, AlternateG> {}
 
+// no RX pin for I2S config
+impl SerializerRx<Tx0Rx1> for NoneT {}
+impl SerializerRx<Tx1Rx0> for NoneT {}
+
 pub struct InterruptMask<T> {
     mask: u16,
     phantom: PhantomData<T>,
@@ -224,43 +231,41 @@ unsafe impl Buffer for I2sDmaBuffer {
     }
 }
 
-pub struct I2s<MasterClockSource, SerialClockPin, FrameSyncPin, RxPin, TxPin> {
+pub struct I2s<MCS, SC_P, FS_P, RX_P, TX_P> {
     hw: pac::I2S,
-    serial_clock_pin: SerialClockPin,
-    frame_sync_pin: FrameSyncPin,
-    data_in_pin: RxPin,
-    data_out_pin: TxPin,
-    master_clock_source: MasterClockSource,
+    serial_clock_pin: SC_P,
+    frame_sync_pin: FS_P,
+    data_in_pin: RX_P,
+    data_out_pin: TX_P,
+    master_clock_source: MCS,
 }
 
 // Need to support three clocking configurations:
 //   gclck master clock (frequency) => serial clock is output (pin+frequency)
 //   external master clock (pin+frequency) => serial clock is output (pin+frequency)
 //   No master clock => serial clock is input (pin)
+impl<MCS, SC_P, FS_P, RX_P, TX_P> I2s<MCS, SC_P, FS_P, RX_P, TX_P> {
 
-impl<MasterClockSource, SerialClockPin, FrameSyncPin, RxPin, TxPin>
-    I2s<MasterClockSource, SerialClockPin, FrameSyncPin, RxPin, TxPin>
-{
     /// master_clock_source, serial_clock_pin, and frame_sync_pin must be attached to the same clock unit
     /// TxPin and RxPin need to be connected to different serializer units
-    pub fn tdm_master<ClkUnit: ClockUnit, SerializerCfg: SerializerOrientation, Freq: Into<Hertz>>(
+    pub fn tdm_master<CU: ClockUnit, SC: SerializerOrientation, F: Into<Hertz>>(
         hw: pac::I2S,
         pm: &mut pac::PM,
-        master_clock_source: MasterClockSource,
-        serial_freq: Freq,
+        master_clock_source: MCS,
+        serial_freq: F,
         number_of_slots: u8,
         bits_per_slot: BitsPerSlot,
-        serial_clock_pin: SerialClockPin,
-        frame_sync_pin: FrameSyncPin,
-        data_in_pin: RxPin,
-        data_out_pin: TxPin,
+        serial_clock_pin: SC_P,
+        frame_sync_pin: FS_P,
+        data_in_pin: RX_P,
+        data_out_pin: TX_P,
     ) -> Self
     where
-        MasterClockSource: MasterClock<ClkUnit>,
-        SerialClockPin: SerialClock<ClkUnit>,
-        FrameSyncPin: FrameSync<ClkUnit>,
-        RxPin: SerializerRx<SerializerCfg>,
-        TxPin: SerializerTx<SerializerCfg>,
+        MCS: MasterClock<CU>,
+        SC_P: SerialClock<CU>,
+        FS_P: FrameSync<CU>,
+        RX_P: SerializerRx<SC>,
+        TX_P: SerializerTx<SC>,
     {
         // Turn on the APB clock to the I2S peripheral
         pm.apbcmask.modify(|_, w| w.i2s_().set_bit());
@@ -274,27 +279,33 @@ impl<MasterClockSource, SerialClockPin, FrameSyncPin, RxPin, TxPin>
 
         // unsafe is due to the bits() calls
         unsafe {
-            hw.clkctrl[ClkUnit::ID as usize].write(|w| {
-                w
-                    .mckdiv().bits(master_clock_divisor)
+            hw.clkctrl[CU::ID as usize].write(|w| {
+                w.mckdiv()
+                    .bits(master_clock_divisor)
                     // .mcksel().mckpin() // Use MCK pin as master clock input
                     // .scksel().sckpin() // Uses SCK pin as input
-                    .sckoutinv().set_bit() // Invert serial clock
-                    .bitdelay().i2s() // 1-bit delay between fsync and data
-                    .fswidth().bit_()
-                    .nbslots().bits(number_of_slots - 1)
-                    .slotsize().variant(bits_per_slot)
+                    .sckoutinv()
+                    .set_bit() // Invert serial clock
+                    .bitdelay()
+                    .i2s() // 1-bit delay between fsync and data
+                    .fswidth()
+                    .bit_()
+                    .nbslots()
+                    .bits(number_of_slots - 1)
+                    .slotsize()
+                    .variant(bits_per_slot)
             });
         }
 
-        hw.serctrl[SerializerCfg::RX_ID as usize].write(|w| w.clksel().variant(ClkUnit::ID));
+        hw.serctrl[SC::RX_ID as usize]
+            .write(|w| w.clksel().variant(CU::ID));
 
-        hw.serctrl[SerializerCfg::TX_ID as usize]
-            .write(|w| w.clksel().variant(ClkUnit::ID).sermode().tx());
+        hw.serctrl[SC::TX_ID as usize]
+            .write(|w| w.clksel().variant(CU::ID).sermode().tx());
 
         // Synchronization doesn't seem to happen until the peripheral is enabled
 
-        match ClkUnit::ID {
+        match CU::ID {
             ClockUnitID::CLK0 => {
                 hw.ctrla.modify(|_, w| w.cken0().set_bit());
             }
@@ -317,10 +328,102 @@ impl<MasterClockSource, SerialClockPin, FrameSyncPin, RxPin, TxPin>
         }
     }
 
+
+
+    pub fn i2s_master<CU: ClockUnit, SC: SerializerOrientation, F: Into<Hertz>> (
+        hw: pac::I2S,
+        pm: &mut pac::PM,
+        master_clock_source: MCS,
+        sample_rate: F,
+        bit_depth: BitsPerSlot,
+        sck_pin: SC_P,
+        fs_pin: FS_P,
+        tx_pin: TX_P,
+    ) -> Self
+    where
+        MCS: MasterClock<CU>,
+        SC_P: SerialClock<CU>,
+        FS_P: FrameSync<CU>,
+        TX_P: SerializerTx<SC>,
+        RX_P: SerializerRx<SC>,
+    {
+        //pseudo rx_pin for I2S object
+        let rx_pin: RX_P = NoneT;
+
+        // enable APB clock path via the power manager
+        pm.apbcmask.modify(|_, w | w.i2s_().set_bit());
+
+        Self::reset(&hw);
+
+        // divisor is simple ratio between source clock and target frequency
+        let sck_freq = sample_rate.into() * (((bit_depth.into()) + 1) * 8);
+        let m_clk_div: u8 = (master_clock_source.freq() / sck_freq - 1) as u8;
+
+        // datasize is dependent on bitdepth
+        let data_size: u8 = match bit_depth.into() {
+            2 => 0x01,
+            _ => 0x04,
+        };
+
+        // setting bits in clock control register for I2S mode
+        unsafe {
+            hw.clkctrl[CU::ID as usize].write(|w | {
+                w
+                    .mckdiv().bits(m_clk_div)
+                    .slotsize().variant(bit_depth)
+                    .nbslots().bits(0x01)
+                    .bitdelay().i2s()
+                    .fswidth().bits(0x01)
+            });
+        }
+
+        //configure the serializer (only one for I2S tx)
+        unsafe {
+            hw.serctrl[SC::TX_ID as usize].write(|w| {
+                w
+                    .clksel().variant(CU::ID)
+                    .sermode().tx()
+                    .datasize().bits(data_size)
+            });
+        }
+
+        // enabling serializer + clock units
+        match SC::TX_ID {
+            Serializer::M0 => {
+                hw.ctrla.modify(|_, w | w.seren0().set_bit());
+            }
+
+            Serializer::M1 => {
+                hw.ctrla.modify(|_, w | w.seren1().set_bit());
+            }
+        }
+
+        match CU::ID {
+            ClockUnitID::CLK0 => {
+                hw.ctrla.modify(|_, w | w.cken0().set_bit());
+            }
+
+            ClockUnitID::CLK1 => {
+                hw.ctrla.modify(|_, w | w.cken1().set_bit());
+            }
+        }
+
+        Self {
+            hw,
+            serial_clock_pin: sck_pin.into(),
+            frame_sync_pin: fs_pin.into(),
+            data_in_pin: rx_pin,
+            data_out_pin: tx_pin.into(),
+            master_clock_source,
+        }
+    }
+
+
+
     pub fn send<SerializerCfg: SerializerOrientation>(&self, v: u32) -> Result<()>
     where
-        RxPin: SerializerRx<SerializerCfg>,
-        TxPin: SerializerTx<SerializerCfg>,
+        RX_P: SerializerRx<SerializerCfg>,
+        TX_P: SerializerTx<SerializerCfg>,
     {
         match SerializerCfg::TX_ID {
             Serializer::M0 => {
@@ -354,11 +457,11 @@ impl<MasterClockSource, SerialClockPin, FrameSyncPin, RxPin, TxPin>
         self,
     ) -> (
         pac::I2S,
-        SerialClockPin,
-        FrameSyncPin,
-        RxPin,
-        TxPin,
-        MasterClockSource,
+        SC_P,
+        FS_P,
+        RX_P,
+        TX_P,
+        MCS,
     ) {
         (
             self.hw,
@@ -391,8 +494,8 @@ impl<MasterClockSource, SerialClockPin, FrameSyncPin, RxPin, TxPin>
 
     pub fn enable_receive_ready_interrupt<SerializerCfg: SerializerOrientation>(&self)
     where
-        RxPin: SerializerRx<SerializerCfg>,
-        TxPin: SerializerTx<SerializerCfg>,
+        RX_P: SerializerRx<SerializerCfg>,
+        TX_P: SerializerTx<SerializerCfg>,
     {
         unsafe {
             self.hw
@@ -403,8 +506,8 @@ impl<MasterClockSource, SerialClockPin, FrameSyncPin, RxPin, TxPin>
 
     pub fn enable_receive_overrun_interrupt<SerializerCfg: SerializerOrientation>(&self)
     where
-        RxPin: SerializerRx<SerializerCfg>,
-        TxPin: SerializerTx<SerializerCfg>,
+        RX_P: SerializerRx<SerializerCfg>,
+        TX_P: SerializerTx<SerializerCfg>,
     {
         unsafe {
             self.hw
@@ -415,8 +518,8 @@ impl<MasterClockSource, SerialClockPin, FrameSyncPin, RxPin, TxPin>
 
     pub fn enable_transmit_ready_interrupt<SerializerCfg: SerializerOrientation>(&self)
     where
-        RxPin: SerializerRx<SerializerCfg>,
-        TxPin: SerializerTx<SerializerCfg>,
+        RX_P: SerializerRx<SerializerCfg>,
+        TX_P: SerializerTx<SerializerCfg>,
     {
         unsafe {
             self.hw
@@ -426,8 +529,8 @@ impl<MasterClockSource, SerialClockPin, FrameSyncPin, RxPin, TxPin>
     }
     pub fn enable_transmit_underrun_interrupt<SerializerCfg: SerializerOrientation>(&self)
     where
-        RxPin: SerializerRx<SerializerCfg>,
-        TxPin: SerializerTx<SerializerCfg>,
+        RX_P: SerializerRx<SerializerCfg>,
+        TX_P: SerializerTx<SerializerCfg>,
     {
         unsafe {
             self.hw
@@ -440,8 +543,8 @@ impl<MasterClockSource, SerialClockPin, FrameSyncPin, RxPin, TxPin>
         &self,
     ) -> InterruptMask<SerializerCfg>
     where
-        RxPin: SerializerRx<SerializerCfg>,
-        TxPin: SerializerTx<SerializerCfg>,
+        RX_P: SerializerRx<SerializerCfg>,
+        TX_P: SerializerTx<SerializerCfg>,
     {
         let ints = self.hw.intflag.read().bits();
         unsafe {
@@ -453,8 +556,8 @@ impl<MasterClockSource, SerialClockPin, FrameSyncPin, RxPin, TxPin>
     #[cfg(feature = "dma")]
     pub fn transmit_dma_buffer<SerializerCfg: SerializerOrientation>(&self) -> I2sDmaBuffer
     where
-        RxPin: SerializerRx<SerializerCfg>,
-        TxPin: SerializerTx<SerializerCfg>,
+        RX_P: SerializerRx<SerializerCfg>,
+        TX_P: SerializerTx<SerializerCfg>,
     {
         I2sDmaBuffer(&self.hw.data[SerializerCfg::TX_ID as usize] as *const _ as *mut u32)
     }
@@ -462,8 +565,8 @@ impl<MasterClockSource, SerialClockPin, FrameSyncPin, RxPin, TxPin>
     #[cfg(feature = "dma")]
     pub fn transmit_dma_trigger<SerializerCfg: SerializerOrientation>(&self) -> DmaTriggerSource
     where
-        RxPin: SerializerRx<SerializerCfg>,
-        TxPin: SerializerTx<SerializerCfg>,
+        RX_P: SerializerRx<SerializerCfg>,
+        TX_P: SerializerTx<SerializerCfg>,
     {
         match SerializerCfg::TX_ID {
             Serializer::M0 => DmaTriggerSource::I2S_TX_0,
@@ -474,8 +577,8 @@ impl<MasterClockSource, SerialClockPin, FrameSyncPin, RxPin, TxPin>
     #[cfg(feature = "dma")]
     pub fn receive_dma_buffer<SerializerCfg: SerializerOrientation>(&self) -> I2sDmaBuffer
     where
-        RxPin: SerializerRx<SerializerCfg>,
-        TxPin: SerializerTx<SerializerCfg>,
+        RX_P: SerializerRx<SerializerCfg>,
+        TX_P: SerializerTx<SerializerCfg>,
     {
         I2sDmaBuffer(&self.hw.data[SerializerCfg::RX_ID as usize] as *const _ as *mut u32)
     }
@@ -483,8 +586,8 @@ impl<MasterClockSource, SerialClockPin, FrameSyncPin, RxPin, TxPin>
     #[cfg(feature = "dma")]
     pub fn receive_dma_trigger<SerializerCfg: SerializerOrientation>(&self) -> DmaTriggerSource
     where
-        RxPin: SerializerRx<SerializerCfg>,
-        TxPin: SerializerTx<SerializerCfg>,
+        RX_P: SerializerRx<SerializerCfg>,
+        TX_P: SerializerTx<SerializerCfg>,
     {
         match SerializerCfg::RX_ID {
             Serializer::M0 => DmaTriggerSource::I2S_RX_0,

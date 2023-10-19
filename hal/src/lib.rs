@@ -70,6 +70,7 @@ pub mod delay;
 pub mod gpio;
 #[cfg(all(feature = "device", not(feature = "samd11")))]
 pub mod i2s;
+//pub mod i2s_new;
 #[cfg(feature = "device")]
 pub mod prelude;
 #[cfg(feature = "device")]

@@ -1,0 +1,36 @@
+
+# general configuration
+[default.probe]
+usb_vid = "2e8a"
+usb_pid = "000c"
+protocol = "Swd"
+#speed = 5000
+
+[default.flashing]
+enabled = true
+do_chip_erase = false
+
+[default.reset]
+enabled = true
+halt_afterwards = false
+
+[default.general]
+chip = "ATSAMD21G18A"
+chip_descriptions = []
+log_level = "WARN"
+connect_under_reset = false
+
+# debug/RTT configuration
+[default.rtt]
+enabled = false
+channels = [
+    # { up = 0, down = 0, name = "name", up_mode = "BlockIfFull", format = "Defmt" },
+]
+timeout = 3000
+show_timestamps = true
+log_enabled = false
+log_path = "./logs"
+
+[default.gdb]
+enabled = false
+gdb_connection_string = "127.0.0.1:3333"

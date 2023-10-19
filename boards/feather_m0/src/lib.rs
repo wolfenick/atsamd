@@ -97,6 +97,10 @@ pub mod pins {
                 PushPullOutput: Ssd1306Rst
             }
         }
+        PA08 {
+            /// This pin doesn't actually "exist"; this is temp for I2S
+            name: d4
+        }
         PA18 {
             /// Pin 10, PWM capable
             name: d10
