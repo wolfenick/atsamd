@@ -339,6 +339,7 @@ impl<MCS, SC_P, FS_P, RX_P, TX_P> I2s<MCS, SC_P, FS_P, RX_P, TX_P> {
         sck_pin: SC_P,
         fs_pin: FS_P,
         tx_pin: TX_P,
+        rx_pin: RX_P,
     ) -> Self
     where
         MCS: MasterClock<CU>,
@@ -348,7 +349,7 @@ impl<MCS, SC_P, FS_P, RX_P, TX_P> I2s<MCS, SC_P, FS_P, RX_P, TX_P> {
         RX_P: SerializerRx<SC>,
     {
         //pseudo rx_pin for I2S object
-        let rx_pin: RX_P = NoneT;
+        //let rx_pin: RX_P = NoneT;
 
         // enable APB clock path via the power manager
         pm.apbcmask.modify(|_, w | w.i2s_().set_bit());
@@ -356,8 +357,8 @@ impl<MCS, SC_P, FS_P, RX_P, TX_P> I2s<MCS, SC_P, FS_P, RX_P, TX_P> {
         Self::reset(&hw);
 
         // divisor is simple ratio between source clock and target frequency
-        let sck_freq = sample_rate.into() * (((bit_depth.into()) + 1) * 8);
-        let m_clk_div: u8 = (master_clock_source.freq() / sck_freq - 1) as u8;
+        let sck_freq = sample_rate.into() * (((bit_depth as u32) + 1) * 8);
+        let m_clk_div: u8 = (master_clock_source.freq() / sck_freq) as u8;
 
         // datasize is dependent on bitdepth
         let data_size: u8 = match bit_depth.into() {
@@ -412,7 +413,7 @@ impl<MCS, SC_P, FS_P, RX_P, TX_P> I2s<MCS, SC_P, FS_P, RX_P, TX_P> {
             hw,
             serial_clock_pin: sck_pin.into(),
             frame_sync_pin: fs_pin.into(),
-            data_in_pin: rx_pin,
+            data_in_pin: rx_pin.into(),
             data_out_pin: tx_pin.into(),
             master_clock_source,
         }
