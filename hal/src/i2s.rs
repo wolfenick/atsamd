@@ -10,6 +10,7 @@ use core::convert::From;
 use core::marker::PhantomData;
 use core::ops::DerefMut;
 use embedded_hal::can::Frame;
+use modular_bitfield::error::OutOfBounds;
 
 #[cfg(all(feature = "samd21", feature = "dma"))]
 pub use pac::dmac::chctrlb::TRIGSRC_A as DmaTriggerSource;
@@ -328,8 +329,6 @@ impl<MCS, SC_P, FS_P, RX_P, TX_P> I2s<MCS, SC_P, FS_P, RX_P, TX_P> {
         }
     }
 
-
-
     pub fn i2s_master<CU: ClockUnit, SC: SerializerOrientation, F: Into<Hertz>> (
         hw: pac::I2S,
         pm: &mut pac::PM,
@@ -352,18 +351,25 @@ impl<MCS, SC_P, FS_P, RX_P, TX_P> I2s<MCS, SC_P, FS_P, RX_P, TX_P> {
         //let rx_pin: RX_P = NoneT;
 
         // enable APB clock path via the power manager
-        pm.apbcmask.modify(|_, w | w.i2s_().set_bit());
+        pm.apbcmask.modify(|_, w| w.i2s_().set_bit());
 
         Self::reset(&hw);
 
         // divisor is simple ratio between source clock and target frequency
-        let sck_freq = sample_rate.into() * (((bit_depth as u32) + 1) * 8);
-        let m_clk_div: u8 = (master_clock_source.freq() / sck_freq) as u8;
+        let frame_width: u32 = match bit_depth {
+            BitsPerSlot::_8 => 16,
+            BitsPerSlot::_16 => 32,
+            BitsPerSlot::_24 => 48,
+            BitsPerSlot::_32 => 64,
+        };
+
+        let sck_freq = sample_rate.into() * frame_width;
+        let m_clk_div: u8 = ((master_clock_source.freq() / sck_freq) - 1) as u8;
 
         // datasize is dependent on bitdepth
         let data_size: u8 = match bit_depth.into() {
             2 => 0x01,
-            _ => 0x04,
+            _ => 0x05,
         };
 
         // setting bits in clock control register for I2S mode
@@ -371,7 +377,7 @@ impl<MCS, SC_P, FS_P, RX_P, TX_P> I2s<MCS, SC_P, FS_P, RX_P, TX_P> {
             hw.clkctrl[CU::ID as usize].write(|w | {
                 w
                     .mckdiv().bits(m_clk_div)
-                    .slotsize().variant(bit_depth)
+                    .slotsize().bits(0x01)
                     .nbslots().bits(0x01)
                     .bitdelay().i2s()
                     .fswidth().bits(0x01)
@@ -385,20 +391,11 @@ impl<MCS, SC_P, FS_P, RX_P, TX_P> I2s<MCS, SC_P, FS_P, RX_P, TX_P> {
                     .clksel().variant(CU::ID)
                     .sermode().tx()
                     .datasize().bits(data_size)
+                    .slotadj().set_bit()
             });
         }
 
-        // enabling serializer + clock units
-        match SC::TX_ID {
-            Serializer::M0 => {
-                hw.ctrla.modify(|_, w | w.seren0().set_bit());
-            }
-
-            Serializer::M1 => {
-                hw.ctrla.modify(|_, w | w.seren1().set_bit());
-            }
-        }
-
+        // enabling clock unit and serialiser
         match CU::ID {
             ClockUnitID::CLK0 => {
                 hw.ctrla.modify(|_, w | w.cken0().set_bit());
@@ -406,6 +403,16 @@ impl<MCS, SC_P, FS_P, RX_P, TX_P> I2s<MCS, SC_P, FS_P, RX_P, TX_P> {
 
             ClockUnitID::CLK1 => {
                 hw.ctrla.modify(|_, w | w.cken1().set_bit());
+            }
+        }
+
+        match SC::TX_ID {
+            Serializer::M0 => {
+                hw.ctrla.modify(|_, w | w.seren0().set_bit());
+            }
+
+            Serializer::M1 => {
+                hw.ctrla.modify(|_, w | w.seren1().set_bit());
             }
         }
 
@@ -419,14 +426,19 @@ impl<MCS, SC_P, FS_P, RX_P, TX_P> I2s<MCS, SC_P, FS_P, RX_P, TX_P> {
         }
     }
 
+    pub fn get_ser_config(&self, ser_no: usize) -> Result<u32> {
+        if ser_no > 1 {
+            return Err(I2SError::WouldBlock);
+        }
+        Ok(self.hw.serctrl[ser_no].read().bits())
+    }
 
-
-    pub fn send<SerializerCfg: SerializerOrientation>(&self, v: u32) -> Result<()>
+    pub fn send<SC: SerializerOrientation>(&self, v: u32) -> Result<()>
     where
-        RX_P: SerializerRx<SerializerCfg>,
-        TX_P: SerializerTx<SerializerCfg>,
+        RX_P: SerializerRx<SC>,
+        TX_P: SerializerTx<SC>,
     {
-        match SerializerCfg::TX_ID {
+        match SC::TX_ID {
             Serializer::M0 => {
                 if self.hw.intflag.read().txrdy0().bit_is_clear() {
                     return Err(I2SError::WouldBlock);
@@ -540,18 +552,20 @@ impl<MCS, SC_P, FS_P, RX_P, TX_P> I2s<MCS, SC_P, FS_P, RX_P, TX_P> {
         }
     }
 
-    pub fn get_and_clear_interrupts<SerializerCfg: SerializerOrientation>(
-        &self,
-    ) -> InterruptMask<SerializerCfg>
+    pub fn get_interrupts<SC: SerializerOrientation>(&self) -> InterruptMask<SC>
     where
-        RX_P: SerializerRx<SerializerCfg>,
-        TX_P: SerializerTx<SerializerCfg>,
+        RX_P: SerializerRx<SC>,
+        TX_P: SerializerTx<SC>,
     {
-        let ints = self.hw.intflag.read().bits();
+        let ints: u16 = self.hw.intflag.read().bits();
+        InterruptMask::from(ints)
+    }
+
+    pub fn clear_interrupts(&self) {
         unsafe {
+            let ints: u16 = self.hw.intflag.read().bits();
             self.hw.intflag.write(|w| w.bits(ints));
         }
-        InterruptMask::from(ints)
     }
 
     #[cfg(feature = "dma")]

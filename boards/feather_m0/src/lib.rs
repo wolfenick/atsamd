@@ -66,14 +66,16 @@ pub mod pins {
             /// Pin 0, rx
             name: d0
             aliases: {
-                AlternateC: UartRx
+                AlternateC: UartRx,
+                AlternateG: I2sFs
             }
         }
         PA10 {
             /// Pin 1, tx
             name: d1
             aliases: {
-                AlternateC: UartTx
+                AlternateC: UartTx,
+                AlternateG: I2sSck
             }
         }
         PA15 {
@@ -94,12 +96,16 @@ pub mod pins {
             /// Pin 9, PWM capable.  Also analog input (A7)
             name: d9
             aliases: {
-                PushPullOutput: Ssd1306Rst
+                PushPullOutput: Ssd1306Rst,
+                AlternateG: I2sTx
             }
         }
         PA08 {
             /// This pin doesn't actually "exist"; this is temp for I2S
             name: d4
+            aliases: {
+                AlternateG: I2sRx
+            }
         }
         PA18 {
             /// Pin 10, PWM capable
